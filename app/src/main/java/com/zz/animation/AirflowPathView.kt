@@ -23,8 +23,8 @@ import kotlin.math.min
 /**
  * Three-path airflow direction view.
  *
- * The three start dots are fixed. Drag near the dots to preview a new center
- * target inside a 150dp radius, then release to commit it as the active airflow.
+ * The three start dots are fixed at the center of this view. Drag near the dots
+ * to preview a new center target, then release to commit it as the active airflow.
  */
 class AirflowPathView @JvmOverloads constructor(
     context: Context,
@@ -49,8 +49,6 @@ class AirflowPathView @JvmOverloads constructor(
     }
 
     private val density = resources.displayMetrics.density
-    private val dragRadius = 150f * density
-    private val topRangePadding = 16f * density
     private val startSpacing = 12f * density
     private val hitRadius = 36f * density
     private val pathHitDistance = 24f * density
@@ -70,6 +68,8 @@ class AirflowPathView @JvmOverloads constructor(
     private var arrowSize = 14.0f * density
     private var endpointArrowOffset = 5.0f * density
     private var dotRadius = 3.2f * density
+    private var dragRadius = 0f
+    private var contentPadding = 0f
 
     private val realPaths = arrayOf(PathSpec(), PathSpec(), PathSpec())
     private val previewPaths = arrayOf(PathSpec(), PathSpec(), PathSpec())
@@ -154,14 +154,9 @@ class AirflowPathView @JvmOverloads constructor(
         super.onSizeChanged(w, h, oldw, oldh)
         if (w <= 0 || h <= 0) return
 
-        val preferredOriginY = max(h * 0.22f, dragRadius + topRangePadding)
-        val maxOriginY = h - dragRadius - topRangePadding
-        val originY = if (maxOriginY > dragRadius) {
-            preferredOriginY.coerceAtMost(maxOriginY)
-        } else {
-            h * 0.5f
-        }
-        origin.set(w * 0.5f, originY)
+        dragRadius = min(w, h) * 0.5f
+        contentPadding = max(arrowSize + endpointArrowOffset + lineWidth * 2f, dotRadius + lineWidth)
+        origin.set(w * 0.5f, h * 0.5f)
 
         if (!hasGeometry) {
             currentTarget.set(origin.x, origin.y + dragRadius * 0.76f)
@@ -317,14 +312,28 @@ class AirflowPathView @JvmOverloads constructor(
         val dx = x - origin.x
         val dy = y - origin.y
         val distance = hypot(dx, dy)
+        var clampedX: Float
+        var clampedY: Float
         if (distance <= dragRadius) {
-            out.set(x, y)
+            clampedX = x
+            clampedY = y
         } else if (distance > 0f) {
             val scale = dragRadius / distance
-            out.set(origin.x + dx * scale, origin.y + dy * scale)
+            clampedX = origin.x + dx * scale
+            clampedY = origin.y + dy * scale
         } else {
-            out.set(origin.x, origin.y + dragRadius * 0.76f)
+            clampedX = origin.x
+            clampedY = origin.y + dragRadius * 0.76f
         }
+
+        if (hasDrawableBounds()) {
+            clampedX = clampDrawableX(clampedX)
+            clampedY = clampDrawableY(clampedY)
+        } else {
+            clampedX = origin.x
+            clampedY = origin.y
+        }
+        out.set(clampedX, clampedY)
     }
 
     private fun commitPreviewDirection() {
@@ -383,8 +392,8 @@ class AirflowPathView @JvmOverloads constructor(
         val sideSpread = min(maxSideSpread, length * 0.22f)
         val minEndGap = startSpacing * 1.4f
 
-        val centerEndX = origin.x + dirX * length
-        val centerEndY = origin.y + dirY * length
+        val centerEndX = clampDrawableX(origin.x + dirX * length)
+        val centerEndY = clampDrawableY(origin.y + dirY * length)
         val normalX = -dirY
         val normalY = dirX
         val leftNormalSign = if (normalX < 0f || (abs(normalX) < 0.001f && normalY < 0f)) 1f else -1f
@@ -394,14 +403,27 @@ class AirflowPathView @JvmOverloads constructor(
         val rightOutY = -leftOutY
         val sideBaseX = origin.x + dirX * sideLength
         val sideBaseY = origin.y + dirY * sideLength
-        val rawLeftEndX = sideBaseX + leftOutX * sideSpread
-        val rawRightEndX = sideBaseX + rightOutX * sideSpread
-        val leftEndX = min(rawLeftEndX, centerEndX - minEndGap)
-        val rightEndX = max(rawRightEndX, centerEndX + minEndGap)
-        val leftSpreadX = leftEndX - sideBaseX
-        val leftSpreadY = leftOutY * sideSpread
-        val rightSpreadX = rightEndX - sideBaseX
-        val rightSpreadY = rightOutY * sideSpread
+        val isMostlyHorizontal = abs(dirX) > 0.88f && abs(dirY) < 0.48f
+        val leftSpreadX: Float
+        val leftSpreadY: Float
+        val rightSpreadX: Float
+        val rightSpreadY: Float
+
+        if (isMostlyHorizontal) {
+            leftSpreadX = 0f
+            leftSpreadY = -sideSpread
+            rightSpreadX = 0f
+            rightSpreadY = sideSpread
+        } else {
+            val rawLeftEndX = sideBaseX + leftOutX * sideSpread
+            val rawRightEndX = sideBaseX + rightOutX * sideSpread
+            val leftEndX = min(rawLeftEndX, centerEndX - minEndGap)
+            val rightEndX = max(rawRightEndX, centerEndX + minEndGap)
+            leftSpreadX = leftEndX - sideBaseX
+            leftSpreadY = leftOutY * sideSpread
+            rightSpreadX = rightEndX - sideBaseX
+            rightSpreadY = rightOutY * sideSpread
+        }
 
         buildSidePath(
             specs[0],
@@ -435,8 +457,14 @@ class AirflowPathView @JvmOverloads constructor(
     ) {
         val baseDx = sideBaseX - startX
         val baseDy = sideBaseY - startY
-        val endX = sideBaseX + spreadX
-        val endY = sideBaseY + spreadY
+        val endX = clampDrawableX(sideBaseX + spreadX)
+        val endY = clampDrawableY(sideBaseY + spreadY)
+        val adjustedSpreadX = endX - sideBaseX
+        val adjustedSpreadY = endY - sideBaseY
+        val cp1X = clampDrawableX(startX + baseDx * 0.30f + adjustedSpreadX * 0.08f)
+        val cp1Y = clampDrawableY(startY + baseDy * 0.32f + adjustedSpreadY * 0.08f)
+        val cp2X = clampDrawableX(startX + baseDx * 0.70f + adjustedSpreadX * 0.55f)
+        val cp2Y = clampDrawableY(startY + baseDy * 0.70f + adjustedSpreadY * 0.55f)
 
         spec.startX = startX
         spec.startY = startY
@@ -445,10 +473,10 @@ class AirflowPathView @JvmOverloads constructor(
         spec.path.reset()
         spec.path.moveTo(startX, startY)
         spec.path.cubicTo(
-            startX + baseDx * 0.30f + spreadX * 0.08f,
-            startY + baseDy * 0.32f + spreadY * 0.08f,
-            startX + baseDx * 0.70f + spreadX * 0.55f,
-            startY + baseDy * 0.70f + spreadY * 0.55f,
+            cp1X,
+            cp1Y,
+            cp2X,
+            cp2Y,
             endX,
             endY
         )
@@ -457,27 +485,47 @@ class AirflowPathView @JvmOverloads constructor(
     }
 
     private fun buildCenterPath(spec: PathSpec, startX: Float, startY: Float, endX: Float, endY: Float) {
-        val dx = endX - startX
-        val dy = endY - startY
+        val safeEndX = clampDrawableX(endX)
+        val safeEndY = clampDrawableY(endY)
+        val dx = safeEndX - startX
+        val dy = safeEndY - startY
         val length = max(1f, hypot(dx, dy))
         val centerBend = min(4f * density, length * 0.018f)
+        val cp1X = clampDrawableX(startX + dx * 0.32f + centerBend)
+        val cp1Y = clampDrawableY(startY + dy * 0.32f)
+        val cp2X = clampDrawableX(startX + dx * 0.72f + centerBend * 0.4f)
+        val cp2Y = clampDrawableY(startY + dy * 0.72f)
 
         spec.startX = startX
         spec.startY = startY
-        spec.endX = endX
-        spec.endY = endY
+        spec.endX = safeEndX
+        spec.endY = safeEndY
         spec.path.reset()
         spec.path.moveTo(startX, startY)
         spec.path.cubicTo(
-            startX + dx * 0.32f + centerBend,
-            startY + dy * 0.32f,
-            startX + dx * 0.72f + centerBend * 0.4f,
-            startY + dy * 0.72f,
-            endX,
-            endY
+            cp1X,
+            cp1Y,
+            cp2X,
+            cp2Y,
+            safeEndX,
+            safeEndY
         )
         spec.pathMeasure.setPath(spec.path, false)
         spec.length = spec.pathMeasure.length
+    }
+
+    private fun hasDrawableBounds(): Boolean {
+        return width > contentPadding * 2f && height > contentPadding * 2f
+    }
+
+    private fun clampDrawableX(x: Float): Float {
+        if (!hasDrawableBounds()) return origin.x
+        return x.coerceIn(contentPadding, width - contentPadding)
+    }
+
+    private fun clampDrawableY(y: Float): Float {
+        if (!hasDrawableBounds()) return origin.y
+        return y.coerceIn(contentPadding, height - contentPadding)
     }
 
     private fun drawStartDots(canvas: Canvas) {
