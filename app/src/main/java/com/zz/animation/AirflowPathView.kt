@@ -15,6 +15,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.animation.LinearInterpolator
 import kotlin.math.atan2
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -55,7 +56,7 @@ class AirflowPathView @JvmOverloads constructor(
     private val pathHitDistance = 24f * density
     private val endpointHitRadius = 32f * density
     private val effectiveDragDistance = 8f * density
-    private val maxSideSpread = 28f * density
+    private val maxSideSpread = 42f * density
     private val pathHitSamples = 24
 
     private var animationDuration = 1600L
@@ -67,6 +68,7 @@ class AirflowPathView @JvmOverloads constructor(
     private var lineWidth = 2.0f * density
     private var previewLineWidth = 1.5f * density
     private var arrowSize = 14.0f * density
+    private var endpointArrowOffset = 5.0f * density
     private var dotRadius = 3.2f * density
 
     private val realPaths = arrayOf(PathSpec(), PathSpec(), PathSpec())
@@ -377,28 +379,64 @@ class AirflowPathView @JvmOverloads constructor(
             length = dragRadius * 0.76f
         }
 
-        val sideLength = length * 0.88f
-        val sideSpread = min(maxSideSpread, length * 0.18f)
+        val sideLength = max(1f, length * 0.86f - min(16f * density, length * 0.08f))
+        val sideSpread = min(maxSideSpread, length * 0.22f)
+        val minEndGap = startSpacing * 1.4f
 
         val centerEndX = origin.x + dirX * length
         val centerEndY = origin.y + dirY * length
+        val normalX = -dirY
+        val normalY = dirX
+        val leftNormalSign = if (normalX < 0f || (abs(normalX) < 0.001f && normalY < 0f)) 1f else -1f
+        val leftOutX = normalX * leftNormalSign
+        val leftOutY = normalY * leftNormalSign
+        val rightOutX = -leftOutX
+        val rightOutY = -leftOutY
         val sideBaseX = origin.x + dirX * sideLength
         val sideBaseY = origin.y + dirY * sideLength
-        val leftEndX = min(sideBaseX - sideSpread, centerEndX - startSpacing * 0.55f)
-        val rightEndX = max(sideBaseX + sideSpread, centerEndX + startSpacing * 0.55f)
-        val leftEndY = sideBaseY
-        val rightEndY = sideBaseY
+        val rawLeftEndX = sideBaseX + leftOutX * sideSpread
+        val rawRightEndX = sideBaseX + rightOutX * sideSpread
+        val leftEndX = min(rawLeftEndX, centerEndX - minEndGap)
+        val rightEndX = max(rawRightEndX, centerEndX + minEndGap)
+        val leftSpreadX = leftEndX - sideBaseX
+        val leftSpreadY = leftOutY * sideSpread
+        val rightSpreadX = rightEndX - sideBaseX
+        val rightSpreadY = rightOutY * sideSpread
 
-        buildPath(specs[0], origin.x - startSpacing, origin.y, leftEndX, leftEndY, -1f)
-        buildPath(specs[1], origin.x, origin.y, centerEndX, centerEndY, 0f)
-        buildPath(specs[2], origin.x + startSpacing, origin.y, rightEndX, rightEndY, 1f)
+        buildSidePath(
+            specs[0],
+            origin.x - startSpacing,
+            origin.y,
+            sideBaseX,
+            sideBaseY,
+            leftSpreadX,
+            leftSpreadY
+        )
+        buildCenterPath(specs[1], origin.x, origin.y, centerEndX, centerEndY)
+        buildSidePath(
+            specs[2],
+            origin.x + startSpacing,
+            origin.y,
+            sideBaseX,
+            sideBaseY,
+            rightSpreadX,
+            rightSpreadY
+        )
     }
 
-    private fun buildPath(spec: PathSpec, startX: Float, startY: Float, endX: Float, endY: Float, side: Float) {
-        val dx = endX - startX
-        val dy = endY - startY
-        val length = max(1f, hypot(dx, dy))
-        val horizontalBend = side * min(8f * density, length * 0.05f)
+    private fun buildSidePath(
+        spec: PathSpec,
+        startX: Float,
+        startY: Float,
+        sideBaseX: Float,
+        sideBaseY: Float,
+        spreadX: Float,
+        spreadY: Float
+    ) {
+        val baseDx = sideBaseX - startX
+        val baseDy = sideBaseY - startY
+        val endX = sideBaseX + spreadX
+        val endY = sideBaseY + spreadY
 
         spec.startX = startX
         spec.startY = startY
@@ -407,9 +445,33 @@ class AirflowPathView @JvmOverloads constructor(
         spec.path.reset()
         spec.path.moveTo(startX, startY)
         spec.path.cubicTo(
-            startX + dx * 0.34f + horizontalBend,
-            startY + dy * 0.34f,
-            startX + dx * 0.72f + horizontalBend * 0.55f,
+            startX + baseDx * 0.30f + spreadX * 0.08f,
+            startY + baseDy * 0.32f + spreadY * 0.08f,
+            startX + baseDx * 0.70f + spreadX * 0.55f,
+            startY + baseDy * 0.70f + spreadY * 0.55f,
+            endX,
+            endY
+        )
+        spec.pathMeasure.setPath(spec.path, false)
+        spec.length = spec.pathMeasure.length
+    }
+
+    private fun buildCenterPath(spec: PathSpec, startX: Float, startY: Float, endX: Float, endY: Float) {
+        val dx = endX - startX
+        val dy = endY - startY
+        val length = max(1f, hypot(dx, dy))
+        val centerBend = min(4f * density, length * 0.018f)
+
+        spec.startX = startX
+        spec.startY = startY
+        spec.endX = endX
+        spec.endY = endY
+        spec.path.reset()
+        spec.path.moveTo(startX, startY)
+        spec.path.cubicTo(
+            startX + dx * 0.32f + centerBend,
+            startY + dy * 0.32f,
+            startX + dx * 0.72f + centerBend * 0.4f,
             startY + dy * 0.72f,
             endX,
             endY
@@ -475,7 +537,7 @@ class AirflowPathView @JvmOverloads constructor(
         arrowPaint.color = pathColor
         arrowPaint.alpha = alpha.toInt().coerceIn(0, 255)
         for (spec in specs) {
-            drawArrowOnPath(canvas, spec, 1.0f, scale)
+            drawEndpointArrowOnPath(canvas, spec, scale)
         }
     }
 
@@ -500,6 +562,24 @@ class AirflowPathView @JvmOverloads constructor(
 
             canvas.save()
             canvas.translate(pos[0], pos[1])
+            canvas.rotate(degrees)
+            canvas.scale(scale, scale)
+            canvas.drawPath(arrowPath, arrowPaint)
+            canvas.restore()
+        }
+    }
+
+    private fun drawEndpointArrowOnPath(canvas: Canvas, spec: PathSpec, scale: Float) {
+        if (spec.pathMeasure.getPosTan(spec.length, pos, tan)) {
+            val tangentLength = hypot(tan[0], tan[1])
+            if (tangentLength <= 0f) return
+
+            val offsetX = tan[0] / tangentLength * endpointArrowOffset
+            val offsetY = tan[1] / tangentLength * endpointArrowOffset
+            val degrees = Math.toDegrees(atan2(tan[1].toDouble(), tan[0].toDouble())).toFloat()
+
+            canvas.save()
+            canvas.translate(pos[0] + offsetX, pos[1] + offsetY)
             canvas.rotate(degrees)
             canvas.scale(scale, scale)
             canvas.drawPath(arrowPath, arrowPaint)
