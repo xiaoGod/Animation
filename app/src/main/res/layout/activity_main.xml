@@ -12,7 +12,7 @@
         <com.zz.animation.AirflowPathView
             android:id="@+id/airflowView"
             android:layout_width="match_parent"
-            android:layout_height="400dp"
+            android:layout_height="0dp"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintBottom_toBottomOf="parent"/>
 
